@@ -19,6 +19,7 @@ else
     java -cp jlox/bin lox.Lox
 fi
 
+
 # 编译与运行 AstPrinter
 # javac -d jlox/bin -sourcepath ./jlox  ./jlox/lox/AstPrinter.java
 # java -cp jlox/bin lox.AstPrinter
