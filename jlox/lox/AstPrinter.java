@@ -1,5 +1,6 @@
 package lox;
 
+// 这个是 AST 树的打印，只作为第二章的实例，没在更新...
 public class AstPrinter implements Expr.Visitor<String> 
 {
     String print(Expr expr)

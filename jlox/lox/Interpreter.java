@@ -1,17 +1,27 @@
 package lox;
 
-class Interpreter implements Expr.Visitor<Object> {
-    // 对外方法
-    void interpret(Expr expression)
+import java.util.List;
+
+class Interpreter implements Expr.Visitor<Object>, Stmt.Visitor<Void> { // Stmt 是对 Expr 的拓展
+    private Environment environment = new Environment();
+
+    // 对外方法，为 AST 中的节点写出具体的处理，实现抽象方法
+    void interpret(List<Stmt> statements)
     {
         try {
-            Object value = evaluate(expression);
-            System.out.println(stringify(value));
+            for (Stmt statement : statements)
+            execute(statement);
         } catch (RuntimeError error) {
             Lox.runtimeError(error);
         }
     }
 
+    private void execute(Stmt stmt)     // 怎么样，名字起的不错吧
+    {
+        stmt.accept(this);
+    }
+
+    // Expr 的抽象方法实现
     @Override
     public Object visitLiteralExpr(Expr.Literal expr)
     {
@@ -137,5 +147,70 @@ class Interpreter implements Expr.Visitor<Object> {
             return text;
         }
         return object.toString();
+    }
+
+    // Stmt 的抽象方法实现
+    @Override
+    public Void visitExpressionStmt(Stmt.Expression stmt)
+    {
+        evaluate(stmt.expression);
+        return null;
+    }
+
+    @Override
+    public Void visitPrintStmt(Stmt.Print stmt)
+    {
+        Object value = evaluate(stmt.expression);
+        System.out.println(stringify(value));
+        return null;
+    }
+
+    @Override
+    public Void visitVarStmt(Stmt.Var stmt)
+    {
+        Object value = null;
+        if (stmt.initializer != null)
+        {
+            value = evaluate(stmt.initializer);
+        }
+
+        environment.define(stmt.name.lexeme, value);
+        return null;
+    }
+
+    @Override
+    public Object visitVariableExpr(Expr.Variable expr)
+    {
+        return environment.get(expr.name);
+    }
+
+    @Override
+    public Object visitAssignExpr(Expr.Assign expr)
+    {
+        Object value = evaluate(expr.value);
+        environment.assign(expr.name, value);
+        return value;
+    }
+
+    @Override
+    public Void visitBlockStmt(Stmt.Block stmt)
+    {
+        executeBlock(stmt.statements, new Environment(environment));
+        return null;
+    }
+
+    void executeBlock(List<Stmt> statements, Environment environment)
+    {
+        Environment previous = this.environment;
+        try {
+            this.environment = environment; // environment 是继承了老环境的新环境（我不是rap）
+
+            for (Stmt statement : statements)
+            {
+                execute(statement); // 开始递归
+            }
+        } finally {
+            this.environment = previous;    // 恢复环境
+        }
     }
 }

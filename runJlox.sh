@@ -8,10 +8,16 @@ fi
 # 编译脚本生成 AST 树的子类
 javac -d jlox/bin -sourcepath ./jlox  ./jlox/tool/GenerateAst.java
 java -cp jlox/bin tool.GenerateAst ./jlox/lox/
+echo "GenerateAst 成功."
 
 # 编译、运行 lox
 javac -d jlox/bin -sourcepath ./jlox  ./jlox/lox/Lox.java
-java -cp jlox/bin lox.Lox
+
+if [ ! -d "program.lox" ]; then
+    java -cp jlox/bin lox.Lox program.lox   
+else
+    java -cp jlox/bin lox.Lox
+fi
 
 # 编译与运行 AstPrinter
 # javac -d jlox/bin -sourcepath ./jlox  ./jlox/lox/AstPrinter.java
