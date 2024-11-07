@@ -1,9 +1,28 @@
 package lox;
 
 import java.util.List;
+import java.util.ArrayList;
 
 class Interpreter implements Expr.Visitor<Object>, Stmt.Visitor<Void> { // Stmt 是对 Expr 的拓展
-    private Environment environment = new Environment();
+    final Environment globals = new Environment();  // 最外层的全局环境
+    private Environment environment = globals;  // 当前作用域环境
+
+    Interpreter()
+    {
+        globals.define("clock", new LoxCallable() { // 定义原生函数
+            @Override
+            public int arity() { return 0; }
+
+            @Override
+            public Object call(Interpreter interpreter, List<Object> arguments)
+            {
+                return (double)System.currentTimeMillis() / 1000.0;
+            }
+
+            @Override
+            public String toString() { return "<native fn>"; }
+        });
+    }
 
     // 对外方法，为 AST 中的节点写出具体的处理，实现抽象方法
     void interpret(List<Stmt> statements)
@@ -96,6 +115,32 @@ class Interpreter implements Expr.Visitor<Object>, Stmt.Visitor<Void> { // Stmt 
         }
 
         return null;
+    }
+
+    public Object visitCallExpr(Expr.Call expr)
+    {
+        Object callee = evaluate(expr.callee);
+
+        List<Object> arguments = new ArrayList<>();
+        for (Expr argument : expr.arguments)
+        {
+            arguments.add(evaluate(argument));
+        }
+
+        if (!(callee instanceof LoxCallable))   // 如果调用者不是一个函数，你怎么办呢，孩子
+        {
+            throw new RuntimeError(expr.paren, "Can only call functions and classes.");
+        }
+
+        LoxCallable function = (LoxCallable)callee;
+
+        if (arguments.size() != function.arity())   // 小子，参数对不上！
+        {
+            throw new RuntimeError(expr.paren, "Expected " + function.arity() + " arguments but got " +
+            arguments.size() + ".");
+        }
+
+        return function.call(this, arguments);
     }
 
     // 一元运算检查
@@ -238,6 +283,21 @@ class Interpreter implements Expr.Visitor<Object>, Stmt.Visitor<Void> { // Stmt 
         }
         return null;
     }
+    @Override
+    public Void visitFunctionStmt(Stmt.Function stmt)
+    {
+        LoxFunction function = new LoxFunction(stmt, environment);
+        environment.define(stmt.name.lexeme, function);
+        return null;
+    }
+    @Override 
+    public Void visitReturnStmt(Stmt.Return stmt)
+    {
+        Object value = null;
+        if (stmt.value != null) value = evaluate(stmt.value);
+
+        throw new Return(value);    // 我们用异常跳过多层的函数嵌套，这简直是天才的构思
+    }
 
     void executeBlock(List<Stmt> statements, Environment environment)
     {
@@ -253,4 +313,5 @@ class Interpreter implements Expr.Visitor<Object>, Stmt.Visitor<Void> { // Stmt 
             this.environment = previous;    // 恢复环境
         }
     }
+
 }
