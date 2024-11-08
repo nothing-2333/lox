@@ -53,4 +53,26 @@ class Environment {
 
         throw new RuntimeError(name, "Undefined variable '" + name.lexeme + "'.");
     }
+
+    Object getAt(int distance, String name)
+    {
+        return ancestor(distance).values.get(name);
+    }
+
+    void assignAt(int distance, Token name, Object value)
+    {
+        ancestor(distance).values.put(name.lexeme, value);
+    }
+
+    // 敲到这时我懂了，我们不再从最近的环境链中一个一个寻找，而是通过静态分析的 distance 进行环境的跳转
+    Environment ancestor(int distance)
+    {
+        Environment environment = this;
+        for (int i = 0; i < distance; ++i)  
+        {
+            environment = environment.enclosing;
+        }
+
+        return environment;
+    }
 }
