@@ -1,1 +1,8 @@
-return "aaa:";
+class Foo {
+  init() {
+    return;
+  }
+}
+
+var foo = Foo();
+print foo.init();

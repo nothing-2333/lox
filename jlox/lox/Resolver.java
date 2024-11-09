@@ -9,18 +9,34 @@ class Resolver implements Expr.Visitor<Object>, Stmt.Visitor<Void> {    // 是�
     private final Interpreter interpreter;  
     private final Stack<Map<String, Boolean>> scopes = new Stack<>();
     private FunctionType currentFunction = FunctionType.NONE;
+    private ClassType currentClass = ClassType.NONE;
 
     // 这个文件总的来说是静态分析，在定义变量与变量赋值时记录了他们对应的作用域的层数；定义了一个变量定义的错误
+
+    /*语义分析感悟
+    语义分析其实是遍历一遍树，在真正执行前，静态的进行一次检查，return 没用在函数里、break 没用在循环里、this
+    用在类中......
+    */
 
     Resolver(Interpreter interpreter)
     {
         this.interpreter = interpreter;
     }
 
-    private enum FunctionType   // 是否处在一个函数内
+    // 是否处在一个函数内
+    private enum FunctionType   
     {
         NONE,
-        FUNCTION
+        FUNCTION,
+        INITIALIZER,
+        METHOD
+    }
+
+    // 是否在一个类内
+    private enum ClassType
+    {
+        NONE,
+        CLASS
     }
 
     /* 访问者模式思考
@@ -113,6 +129,11 @@ class Resolver implements Expr.Visitor<Object>, Stmt.Visitor<Void> {    // 是�
 
         if (stmt.value != null)
         {
+            if (currentFunction == FunctionType.INITIALIZER)
+            {
+                Lox.error(stmt.ketword, "Can't return a value from an initializer.");
+            }
+
             resolve(stmt.value);
         }
 
@@ -173,6 +194,61 @@ class Resolver implements Expr.Visitor<Object>, Stmt.Visitor<Void> {    // 是�
     public Void visitUnaryExpr(Expr.Unary expr)
     {
         resolve(expr.right);
+        return null;
+    }
+
+    @Override
+    public Void visitClassStmt(Stmt.Class stmt)
+    {
+        ClassType enclosingClass = currentClass;
+        currentClass = ClassType.CLASS;
+
+        declare(stmt.name);
+        declare(stmt.name);
+
+        beginScope();
+        scopes.peek().put("this", true);
+
+        for (Stmt.Function method : stmt.methods)
+        {
+            FunctionType declaration = FunctionType.METHOD;
+
+            if (method.name.lexeme.equals("init"))
+            {
+                declaration = FunctionType.INITIALIZER;
+            }
+
+            resolveFunction(method, declaration);
+        }
+
+        endScope();
+
+        currentClass = enclosingClass;
+        return null;
+    }
+    @Override
+    public Void visitGetExpr(Expr.Get expr)
+    {
+        resolve(expr.object);
+        return null;
+    }
+    @Override
+    public Void visitSetExpr(Expr.Set expr)
+    {
+        resolve(expr.value);
+        resolve(expr.object);
+        return null;
+    }
+    @Override
+    public Void visitThisExpr(Expr.This expr)
+    {
+        if (currentClass == ClassType.NONE)
+        {
+            Lox.error(expr.keyword, "Can't use 'this' outside of a class.");
+            return null;
+        }
+
+        resolveLocal(expr, expr.keyword);
         return null;
     }
 
