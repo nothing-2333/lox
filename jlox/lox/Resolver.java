@@ -36,7 +36,8 @@ class Resolver implements Expr.Visitor<Object>, Stmt.Visitor<Void> {    // 是�
     private enum ClassType
     {
         NONE,
-        CLASS
+        CLASS,
+        SUBCLASS
     }
 
     /* 访问者模式思考
@@ -206,6 +207,24 @@ class Resolver implements Expr.Visitor<Object>, Stmt.Visitor<Void> {    // 是�
         declare(stmt.name);
         declare(stmt.name);
 
+        // 静态检查子类与父类名称相同
+        if (stmt.superclass != null && stmt.name.lexeme.equals(stmt.superclass.name.lexeme))
+        {
+            Lox.error(stmt.superclass.name, "A class can't inherit from itself.");
+        }
+
+        if (stmt.superclass != null)
+        {
+            currentClass = ClassType.SUBCLASS;      // super 关键字的静态检查
+            resolve(stmt.superclass);
+        }
+
+        if (stmt.superclass != null)    // 为 super 单独开一个环境，解决继承时 super 指向问题
+        {
+            beginScope();
+            scopes.peek().put("super", true);
+        }
+
         beginScope();
         scopes.peek().put("this", true);
 
@@ -222,6 +241,8 @@ class Resolver implements Expr.Visitor<Object>, Stmt.Visitor<Void> {    // 是�
         }
 
         endScope();
+
+        if (stmt.superclass != null) endScope();
 
         currentClass = enclosingClass;
         return null;
@@ -251,6 +272,21 @@ class Resolver implements Expr.Visitor<Object>, Stmt.Visitor<Void> {    // 是�
         resolveLocal(expr, expr.keyword);
         return null;
     }
+    @Override
+    public Void visitSuperExpr(Expr.Super expr)
+    {
+        if (currentClass == ClassType.NONE)
+        {
+            Lox.error(expr.keyword, "Can't use 'super' outside of a class.");
+        }
+        else if (currentClass != ClassType.SUBCLASS)
+        {
+            Lox.error(expr.keyword, "Can't use 'super' in a class with no superclass.");
+        }
+
+        resolveLocal(expr, expr.keyword);
+        return null;
+    }
 
     private void resolveFunction(Stmt.Function function, FunctionType type)
     {
@@ -269,6 +305,7 @@ class Resolver implements Expr.Visitor<Object>, Stmt.Visitor<Void> {    // 是�
         currentFunction = enclosingFunction;    // 应对函数嵌套
     }
     
+    // 让解释器可以直接跳到这个作用域
     private void resolveLocal(Expr expr, Token name)
     {
         for (int i = scopes.size() - 1; i >= 0; --i)

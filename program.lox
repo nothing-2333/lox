@@ -1,8 +1,19 @@
-class Foo {
-  init() {
-    return;
+class A {
+  method() {
+    print "A method";
   }
 }
 
-var foo = Foo();
-print foo.init();
+class B < A {
+  method() {
+    print "B method";
+  }
+
+  test() {
+    super.method();
+  }
+}
+
+class C < B {}
+
+C().test();
