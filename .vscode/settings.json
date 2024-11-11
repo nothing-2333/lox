@@ -1,3 +1,15 @@
 {
-    "java.debug.settings.onBuildFailureProceed": true
+    "java.debug.settings.onBuildFailureProceed": true,
+    "java.jdt.ls.vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx2G -Xms100m -Xlog:disable",
+    "files.associations": {
+        "common.h": "c",
+        "stdbool.h": "c",
+        "stddef.h": "c",
+        "stdint.h": "c",
+        "memory.h": "c",
+        "stdio.h": "c",
+        "value.h": "c",
+        "debug.h": "c"
+    },
+    "cmake.sourceDirectory": "/home/nothing/CraftingInterpreters/clox"
 }
