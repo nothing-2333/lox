@@ -9,7 +9,9 @@
         "memory.h": "c",
         "stdio.h": "c",
         "value.h": "c",
-        "debug.h": "c"
+        "debug.h": "c",
+        "chunk.h": "c",
+        "type_traits": "c"
     },
     "cmake.sourceDirectory": "/home/nothing/CraftingInterpreters/clox"
 }

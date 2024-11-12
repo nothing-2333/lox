@@ -8,14 +8,19 @@
 typedef enum
 {
     OP_CONSTANT,
+    OP_ADD,
+    OP_SUBTRACT,
+    OP_MULTIPLY,
+    OP_DIVIDE,
+    OP_NEGATE,
     OP_RETURN,
 } OpCode;
 
 // 代码
 typedef struct 
 {
-    int count;
-    int capacity;
+    int count;              // 当前大小
+    int capacity;           // 动态数组容量
     uint8_t* code;          // 代码的字节码
     int* lines;             // 代码对应的行数
     ValueArray constants;   // 常量池
