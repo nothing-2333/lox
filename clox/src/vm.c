@@ -3,8 +3,9 @@
 #include "common.h"
 #include "vm.h"
 #include "debug.h"
+#include "compiler.h"
 
-VM vm;
+VM vm;  // 虚拟机是个全局变量
 
 // 初始化虚拟机的栈内存
 static void resetStack()
@@ -89,9 +90,8 @@ static InterpretResult run()
     #undef BINARY_OP
 }
 
-InterpretResult interpret(Chunk* chunk)
+InterpretResult interpret(const char* source)
 {
-    vm.chunk = chunk;
-    vm.ip = vm.chunk->code; // 对于虚拟机来说最重要的是代码、以及执行到了哪（好吧其实常量池也很重要，藏在 chunk 中）
-    return run();
+    compile(source);
+    return INTERPRET_OK;
 }

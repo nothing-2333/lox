@@ -27,8 +27,8 @@ void initVM();
 // 释放虚拟机的内存
 void freeVM();
 
-// 开始执行吧，宝贝（呕，好恶心）
-InterpretResult interpret(Chunk* chunk);
+// 开始执行吧，宝贝（呕）
+InterpretResult interpret(const char* source);
 
 // 入栈、出栈
 void push(Value value);

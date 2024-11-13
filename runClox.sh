@@ -15,5 +15,7 @@ cd clox/build
 cmake ..
 cmake --build .
 
+cd ..
+cd ..
 
-../bin/clox
+./clox/bin/clox program.lox
