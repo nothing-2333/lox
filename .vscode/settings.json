@@ -12,7 +12,8 @@
         "debug.h": "c",
         "chunk.h": "c",
         "type_traits": "c",
-        "string_view": "c"
+        "string_view": "c",
+        "scanner.h": "c"
     },
     "cmake.sourceDirectory": "/home/nothing/CraftingInterpreters/clox"
 }
