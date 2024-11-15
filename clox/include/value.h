@@ -3,8 +3,38 @@
 
 #include "common.h"
 
+// 值的类型
+typedef enum
+{
+  VAL_BOOL,
+  VAL_NIL, 
+  VAL_NUMBER,
+} ValueType;
+
 // 常量类型
-typedef double Value;
+typedef struct 
+{
+    ValueType type;
+    union 
+    {
+        bool boolean;
+        double number;
+    } as;
+} Value;
+
+// 判断
+#define IS_BOOL(value)          ((value).type == VAL_BOOL)
+#define IS_NIL(value)           ((value).type == VAL_NIL)
+#define IS_NUMBER(value)        ((value).type == VAL_NUMBER)
+
+// 转换
+#define AS_BOOL(value)          ((value).as.boolean)
+#define AS_NUMBER(value)        ((value).as.number)
+
+// 快速定义
+#define BOOL_VAL(value)         ((Value){VAL_BOOL, {.boolean = value}})
+#define NIL_VAL                 ((Value){VAL_NIL, {.number = 0}})
+#define NUMBER_VAL(value)       ((Value){VAL_NUMBER, {.number = value}})
 
 // 常量池，动态数组
 typedef struct
@@ -13,6 +43,9 @@ typedef struct
     int count;
     Value* values;
 } ValueArray;
+
+// 值的比较
+bool valuesEqual(Value a, Value b);
 
 // 常量池动态数组的分配
 void initValueArray(ValueArray* array);
