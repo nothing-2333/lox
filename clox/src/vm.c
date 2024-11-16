@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
 
 #include "common.h"
 #include "vm.h"
 #include "debug.h"
 #include "compiler.h"
+#include "memory.h"
 
 VM vm;  // 虚拟机是个全局变量
 
@@ -32,11 +34,12 @@ static void runtimeError(const char* format, ...)
 void initVM()
 {
     resetStack();
+    vm.objects = NULL;
 }
  
 void freeVM()
 {
-
+    freeObjects(); 
 }
 
 void push(Value value)
@@ -61,6 +64,22 @@ static Value peek(int distance)
 static bool isFalsey(Value value)
 {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
+}
+
+// 字符串连接
+static void concatenate()
+{
+    ObjString* b = AS_STRING(pop());
+    ObjString* a = AS_STRING(pop());
+
+    int length = a->length + b->length;
+    char* chars = ALLOCATE(char, length + 1);
+    memcpy(chars, a->chars, a->length);
+    memcpy(chars + a->length, b->chars, b->length);
+    chars[length] = '\0';
+
+    ObjString* result = takeString(chars, length);
+    push(OBJ_VAL(result));
 }
 
 // 指令分发函数-主函数
@@ -116,7 +135,25 @@ static InterpretResult run()
         }
         case OP_GREATER:        BINAPY_OP(BOOL_VAL, >); break;
         case OP_LESS:           BINAPY_OP(BOOL_VAL, <); break;
-        case OP_ADD:            BINAPY_OP(NUMBER_VAL, +); break;
+        case OP_ADD:
+        {
+            if (IS_STRING(peek(0)) && IS_STRING(peek(1)))
+            {
+                concatenate();
+            }
+            else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1)))
+            {
+                double b = AS_NUMBER(pop());
+                double a = AS_NUMBER(pop()); 
+                push(NUMBER_VAL(a + b));
+            }
+            else
+            {
+                runtimeError("Operands must be two numbers or two strings."); 
+                return INTERPRET_RUNTIME_ERROR; 
+            }
+            break;
+        }
         case OP_SUBTRACT:       BINAPY_OP(NUMBER_VAL, -); break;
         case OP_MULTIPLY:       BINAPY_OP(NUMBER_VAL, *); break;
         case OP_DIVIDE:         BINAPY_OP(NUMBER_VAL, /); break;
