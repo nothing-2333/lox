@@ -31,6 +31,7 @@ struct ObjString    // 实现多态
     Obj obj;
     int length;
     char* chars;
+    uint32_t hash;
 };
 
 // 将代码中的c字符串转换成ObjString-不分配内存版

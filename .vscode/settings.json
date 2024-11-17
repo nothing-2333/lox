@@ -25,7 +25,8 @@
         "tuple": "c",
         "utility": "c",
         "system_error": "c",
-        "vm.h": "c"
+        "vm.h": "c",
+        "table.h": "c"
     },
     "cmake.sourceDirectory": "/home/nothing/CraftingInterpreters/clox"
 }
