@@ -34,7 +34,7 @@ typedef enum    // 优先级从低到高
   PREC_PRIMARY
 } Precedence;
 
-typedef void (*ParseFn)(); // 函数指针，见名知意
+typedef void (*ParseFn)(bool canAssign); // 函数指针，见名知意
 
 // 解析规则
 typedef struct 
@@ -100,16 +100,30 @@ static void advance()   // 词法是语法的进一步抽象（我就说吧，�
     }
 }
 
-// 检验是否是预期的类型，不是就报错
+// 判断正在处理的Token类型
+static bool check(TokenType type)
+{
+    return parser.current.type == type;
+}
+
+// 检验是否是预期的类型，不是就报错，是就吃掉
 static void consume(TokenType type, const char* message)
 {
-    if (parser.current.type == type)
+    if (check(type))
     {
         advance();
         return;
     }
     
     errorAtCurrent(message);
+}
+
+// 检验是否是预期的类型，不是就返回false，是就吃掉
+static bool match(TokenType type)
+{
+    if (!check(type)) return false;
+    advance();
+    return true;
 }
 
 // 向字节码中写入追加一个字节
@@ -163,11 +177,14 @@ static void endCompiler()
 }
 
 static void parsePrecedence(Precedence precedence);
-static ParseRule* getRule(TokenType type);
 static void expression();
+static void statement();
+static void declaration();
+static ParseRule* getRule(TokenType type);
+static uint8_t identifierConstant(Token* name);
 
 // 二元表达式
-static void binary()    // 中缀表达式
+static void binary(bool canAssign)    // 中缀表达式
 {
     TokenType operatorType = parser.previous.type;
     ParseRule* rule = getRule(operatorType);   // 二元表达式之间亦有优先级     2 * 3 + 4
@@ -191,7 +208,7 @@ static void binary()    // 中缀表达式
 }
 
 // 解析false、nil或 true
-static void literal()   // 前缀
+static void literal(bool canAssign)   // 前缀
 {
     switch (parser.previous.type)
     {   
@@ -203,27 +220,50 @@ static void literal()   // 前缀
 }
 
 // 分组表达式识别
-static void grouping()  // 前缀表达式 （）只是用来调整添加字节码的顺序，本身不产生字节码
+static void grouping(bool canAssign)  // 前缀表达式 （）只是用来调整添加字节码的顺序，本身不产生字节码
 {
     expression();   // 递归启动！
     consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
 }
 
 // TOKEN_NUMBER对应的处理函数
-static void number()
+static void number(bool canAssign)
 {
     double value = strtod(parser.previous.start, NULL);
     emitConstant(NUMBER_VAL(value));
 }
 
 // 字符串Token的处理函数
-static void string()
+static void string(bool canAssign)
 {
     emitConstant(OBJ_VAL(copyString(parser.previous.start + 1, parser.previous.length - 2)));
 }
 
+// 变量赋值或者获取
+static void namedVariable(Token name, bool canAssign)
+{
+    uint8_t arg = identifierConstant(&name);
+
+    if (canAssign && match(TOKEN_EQUAL))
+    {
+        expression();
+        emitBytes(OP_SET_GLOBAL, arg);
+    }
+    else
+    {
+        emitBytes(OP_GET_GLOBAL, arg);
+    }
+
+}
+
+// 读取变量表达式
+static void variable(bool canAssign)
+{
+    namedVariable(parser.previous, canAssign);
+}
+
 // 一元表达式
-static void unary() // 前缀表达式 
+static void unary(bool canAssign) // 前缀表达式 
 {
     TokenType operatorType = parser.previous.type;
 
@@ -257,7 +297,7 @@ ParseRule rules[] = {
   [TOKEN_GREATER_EQUAL] = {NULL,     binary, PREC_COMPARISON},
   [TOKEN_LESS]          = {NULL,     binary, PREC_COMPARISON},
   [TOKEN_LESS_EQUAL]    = {NULL,     binary, PREC_COMPARISON},
-  [TOKEN_IDENTIFIER]    = {NULL,     NULL,   PREC_NONE},
+  [TOKEN_IDENTIFIER]    = {variable, NULL,   PREC_NONE},
   [TOKEN_STRING]        = {string,   NULL,   PREC_NONE},
   [TOKEN_NUMBER]        = {number,   NULL,   PREC_NONE},
   [TOKEN_AND]           = {NULL,     NULL,   PREC_NONE},
@@ -292,7 +332,8 @@ static void parsePrecedence(Precedence precedence)  // 想念递归下降的第�
         return;
     }
 
-    prefixRule();   // 优先判断是不是前缀表达式，如果是就递归解析
+    bool canAssign = precedence <= PREC_ASSIGNMENT;
+    prefixRule(canAssign);   // 优先判断是不是前缀表达式，如果是就递归解析
 
     /*
     经过上边的递归parser.current指向了缀表达式的下一个词，而precedence还是最初传进来的那个，前缀表示式不用查表获取优先级，如果查到的下一个
@@ -302,8 +343,32 @@ static void parsePrecedence(Precedence precedence)  // 想念递归下降的第�
     {
         advance();
         ParseFn infixRule = getRule(parser.previous.type)->infix;
-        infixRule();
+        infixRule(canAssign);
     }
+
+    if (canAssign && match(TOKEN_EQUAL))
+    {
+        error("Invalid assignment target.");
+    }
+}
+
+// 把变量名存进常量池，返回索引
+static uint8_t identifierConstant(Token* name)
+{
+    return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
+}
+
+// 解析变量名
+static uint8_t parseVariable(const char* errorMessage)
+{
+    consume(TOKEN_IDENTIFIER, errorMessage);
+    return identifierConstant(&parser.previous);
+}
+
+// 定义一个变量
+static void defineVariable(uint8_t global)
+{
+    emitBytes(OP_DEFINE_GLOBAL, global); 
 }
 
 // 在表中查询
@@ -319,7 +384,111 @@ static void expression()
     parsePrecedence(PREC_ASSIGNMENT);
 }
 
-// lox代码编译成字节码
+// var语句
+static void varDeclaration()
+{
+    uint8_t global = parseVariable("Expect variable name.");
+
+    if (match(TOKEN_EQUAL))
+    {
+        expression();
+    }
+    else
+    {
+        emitByte(OP_NIL);
+    }
+    consume(TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
+
+    defineVariable(global);
+}
+
+// 表达式语句
+static void expressionStatement()
+{
+    expression();
+    consume(TOKEN_SEMICOLON, "Expect ';' after expression.");
+    emitByte(OP_POP);
+}
+
+// print语句
+static void printStatement()
+{
+    expression();
+    consume(TOKEN_SEMICOLON, "Expect ';' after value.");
+    emitByte(OP_PRINT);
+}
+
+// 发生恐慌后接着寻找这个语句的错误
+static void synchronize()
+{
+    parser.panicMode = false;
+
+    while (parser.previous.type != TOKEN_EOF)
+    {
+        if (parser.previous.type == TOKEN_SEMICOLON) return;
+        switch (parser.current.type)
+        {
+            case TOKEN_CLASS:
+            case TOKEN_FUN:
+            case TOKEN_VAR:
+            case TOKEN_FOR:
+            case TOKEN_IF:
+            case TOKEN_WHILE:
+            case TOKEN_PRINT:
+            case TOKEN_RETURN:
+                return;
+        
+            default:
+                ;
+        }
+
+        advance();
+    }
+    
+}
+
+// 解析语句
+static void declaration()
+{
+    if (match(TOKEN_VAR))
+    {
+        varDeclaration();
+    }
+    else
+    {
+        statement();
+    }
+
+    if (parser.panicMode) synchronize();
+}
+
+// statement
+static void statement()
+{
+    if (match(TOKEN_PRINT))
+    {
+        printStatement();
+    }
+    else
+    {
+        expressionStatement();
+    }
+}
+
+/*lox代码编译成字节码
+declaration    → classDecl
+               | funDecl
+               | varDecl
+               | statement ;
+
+statement      → exprStmt
+               | forStmt
+               | ifStmt
+               | printStmt
+               | returnStmt
+               | whileStmt
+               | block ;
+ */
 bool compile(const char* source, Chunk* chunk)
 {
     initScanner(source);
@@ -329,8 +498,11 @@ bool compile(const char* source, Chunk* chunk)
     parser.panicMode = false;
 
     advance();
-    expression();
-    consume(TOKEN_EOF, "Expect end of expression.");
+    while (!match(TOKEN_EOF))
+    {
+        declaration();
+    }
+    
     endCompiler();
     return !parser.hadError;
 }

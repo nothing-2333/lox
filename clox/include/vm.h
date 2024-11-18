@@ -14,6 +14,7 @@ typedef struct
     uint8_t* ip; // ip 总是指向下一条指令，而不是当前正在处理的指令
     Value stack[STACK_MAX]; // 栈式虚拟机，最重要的当然是栈
     Value* stackTop;    // 下一个空闲空间
+    Table globals;    // 全局作用域表
     Table strings;  // hash表中驻留的字符串-集合
     Obj* objects; // 指向申请内存的对象
 } VM;
