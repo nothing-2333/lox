@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "common.h"
 #include "compiler.h"
@@ -44,7 +45,21 @@ typedef struct
     Precedence precedence;
 } ParseRule;
 
+// 局部作用域
+typedef struct 
+{
+    Token name;
+    int depth;
+} Local;
+typedef struct 
+{
+    Local locals[UINT8_COUNT];
+    int localCount;
+    int scopeDepth;
+} Compiler;
+
 Parser parser; // 解析器也是全局的
+Compiler* current = NULL;    // 编译器的局部作用域
 Chunk* compilingChunk;   // 存储解析出的字节码
 
 static Chunk* currentChunk()
@@ -164,6 +179,14 @@ static void emitConstant(Value value)
     emitBytes(OP_CONSTANT, makeConstant(value));
 }
 
+// 初始化
+static void initCompiler(Compiler* compiler)
+{
+    compiler->localCount = 0;
+    compiler->scopeDepth = 0;
+    current = compiler;
+}
+
 // 编译的收尾
 static void endCompiler()
 {
@@ -176,12 +199,31 @@ static void endCompiler()
     #endif
 }
 
+// 作用域加一
+static void beginScope()
+{
+    current->scopeDepth++;
+}
+
+// 作用域减一
+static void endScope()
+{
+    current->scopeDepth--;
+
+    while (current->localCount > 0 && current->locals[current->localCount - 1].depth > current->scopeDepth)
+    {
+        emitByte(OP_POP);   // 作用域消失时，局部变量出栈
+        current->localCount--;
+    }
+}
+
 static void parsePrecedence(Precedence precedence);
 static void expression();
 static void statement();
 static void declaration();
 static ParseRule* getRule(TokenType type);
 static uint8_t identifierConstant(Token* name);
+static int resolveLocal(Compiler* compiler, Token* name);
 
 // 二元表达式
 static void binary(bool canAssign)    // 中缀表达式
@@ -242,16 +284,28 @@ static void string(bool canAssign)
 // 变量赋值或者获取
 static void namedVariable(Token name, bool canAssign)
 {
-    uint8_t arg = identifierConstant(&name);
+    uint8_t getOp, setOp;
+    int arg = resolveLocal(current, &name);
+    if (arg != -1)
+    {
+        getOp = OP_GET_LOCAL;
+        setOp = OP_SET_LOCAL;
+    }
+    else
+    {
+        arg = identifierConstant(&name);
+        getOp = OP_GET_GLOBAL;
+        setOp = OP_SET_GLOBAL;
+    }
 
     if (canAssign && match(TOKEN_EQUAL))
     {
         expression();
-        emitBytes(OP_SET_GLOBAL, arg);
+        emitBytes(setOp, (uint8_t)arg);
     }
     else
     {
-        emitBytes(OP_GET_GLOBAL, arg);
+        emitBytes(getOp, (uint8_t)arg);
     }
 
 }
@@ -320,7 +374,6 @@ ParseRule rules[] = {
   [TOKEN_EOF]           = {NULL,     NULL,   PREC_NONE},
 };
 
-
 // 确立解析表达式的优先级
 static void parsePrecedence(Precedence precedence)  // 想念递归下降的第一天
 {   
@@ -358,16 +411,95 @@ static uint8_t identifierConstant(Token* name)
     return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
 }
 
+// 判断两个名称Token相等
+static bool identifiersEqual(Token* a, Token* b)
+{
+    if (a->length != b->length) return false;
+    return memcmp(a->start, b->start, a->length) == 0;
+}
+
+// 解析局部变量
+static int resolveLocal(Compiler* compiler, Token* name)
+{
+
+    for (int i = compiler->localCount - 1; i >= 0; --i)
+    {
+        Local* local = &compiler->locals[i];
+        if (identifiersEqual(name, &local->name))
+        {
+            if (local->depth == -1)
+            {
+                error("Can't read local variable in its own initializer.");
+            }
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+// 记住局部变量的位置
+static void addLocal(Token name)
+{
+    if (current->localCount == UINT8_COUNT)
+    {
+        error("Too many local variables in function.");
+        return;
+    }
+
+    Local* local = &current->locals[current->localCount++];
+    local->name = name;
+    local->depth = -1;
+}
+
+// 局部变量处理
+static void declareVariable()
+{
+    if (current->scopeDepth == 0) return; // 全局变量不处理
+    Token* name = &parser.previous;
+    for (int i = current->localCount - 1; i >= 0; --i)
+    {
+        Local* local = &current->locals[i];
+        if (local->depth != -1 && local->depth < current->scopeDepth)
+        {
+            break;
+        }
+
+        if (identifiersEqual(name, &local->name))
+        {
+            error("Already a variable with this name in this scope.");
+        }
+    }
+
+    addLocal(*name);
+}
+
 // 解析变量名
 static uint8_t parseVariable(const char* errorMessage)
 {
     consume(TOKEN_IDENTIFIER, errorMessage);
+
+    declareVariable();
+    if (current->scopeDepth > 0) return 0;  // 局部变量不放入常量池
+
     return identifierConstant(&parser.previous);
+}
+
+// 变量的初始化式编译完成，再将其标记为已初始化
+static void markInitialized()
+{
+    current->locals[current->localCount - 1].depth = current->scopeDepth;
 }
 
 // 定义一个变量
 static void defineVariable(uint8_t global)
 {
+    if (current->scopeDepth > 0) // 局部变量不放入常量池
+    {
+        markInitialized();
+        return; 
+    }
+
     emitBytes(OP_DEFINE_GLOBAL, global); 
 }
 
@@ -382,6 +514,17 @@ static void expression()
 {
     // 先假设为最低优先级，什么都要解析，后续再进行调整
     parsePrecedence(PREC_ASSIGNMENT);
+}
+
+// 块 
+static void block()
+{
+    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF))
+    {
+        declaration();
+    }
+    
+    consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
 }
 
 // var语句
@@ -469,6 +612,12 @@ static void statement()
     {
         printStatement();
     }
+    else if (match(TOKEN_LEFT_BRACE))
+    {
+        beginScope();
+        block();
+        endScope();
+    }
     else
     {
         expressionStatement();
@@ -492,6 +641,8 @@ statement      → exprStmt
 bool compile(const char* source, Chunk* chunk)
 {
     initScanner(source);
+    Compiler compiler;
+    initCompiler(&compiler);
     compilingChunk = chunk; // 都是指针，真正的资源只有一个，在vm.c中
 
     parser.hadError = false;
