@@ -1,9 +1,5 @@
+for (var i = 0; i < 10; i = i + 1)
 {
-    var breakfast = "beignets";
-    var beverage = "cafe au lait";
-    {
-        breakfast = "beignets with " + beverage;
-
-        print breakfast;
-    }
+    print i;
 }
+

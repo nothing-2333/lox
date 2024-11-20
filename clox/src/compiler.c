@@ -154,6 +154,28 @@ static void emitBytes(uint8_t byte1, uint8_t byte2)
     emitByte(byte2);
 }
 
+// 循环指令
+static void emitLoop(int loopStart)
+{
+    emitByte(OP_LOOP);
+
+    int offset = currentChunk()->count - loopStart + 2; // 2是OP_LOOP后两字节的偏移，因为是往回跳
+    if (offset > UINT16_MAX) error("Loop body too large.");
+
+    emitByte((offset >> 8) & 0xff);
+    emitByte(offset & 0xff);
+};
+
+
+// jump指令
+static int emitJump(uint8_t instruction)
+{
+    emitByte(instruction);
+    emitByte(0xff); // 等待回填的跳转偏移
+    emitByte(0xff);
+    return currentChunk()->count - 2;   // 回填地址
+}
+
 // 向字节码中添加OP_RETURN
 static void emitReturn()
 {
@@ -177,6 +199,20 @@ static uint8_t makeConstant(Value value)
 static void emitConstant(Value value)
 {
     emitBytes(OP_CONSTANT, makeConstant(value));
+}
+
+// 回填
+static void patchJump(int offset)
+{
+    int jump = currentChunk()->count - offset - 2;
+
+    if (jump > UINT16_MAX)
+    {
+        error("Too much code to jump over.");
+    }
+
+    currentChunk()->code[offset] = (jump >> 8) & 0xff;  // 大端
+    currentChunk()->code[offset + 1] = jump & 0xff;
 }
 
 // 初始化
@@ -224,6 +260,8 @@ static void declaration();
 static ParseRule* getRule(TokenType type);
 static uint8_t identifierConstant(Token* name);
 static int resolveLocal(Compiler* compiler, Token* name);
+static void and_(bool canAssign);
+static void or_(bool canAssign);
 
 // 二元表达式
 static void binary(bool canAssign)    // 中缀表达式
@@ -354,7 +392,7 @@ ParseRule rules[] = {
   [TOKEN_IDENTIFIER]    = {variable, NULL,   PREC_NONE},
   [TOKEN_STRING]        = {string,   NULL,   PREC_NONE},
   [TOKEN_NUMBER]        = {number,   NULL,   PREC_NONE},
-  [TOKEN_AND]           = {NULL,     NULL,   PREC_NONE},
+  [TOKEN_AND]           = {NULL,     and_,   PREC_AND},
   [TOKEN_CLASS]         = {NULL,     NULL,   PREC_NONE},
   [TOKEN_ELSE]          = {NULL,     NULL,   PREC_NONE},
   [TOKEN_FALSE]         = {literal,  NULL,   PREC_NONE},
@@ -362,7 +400,7 @@ ParseRule rules[] = {
   [TOKEN_FUN]           = {NULL,     NULL,   PREC_NONE},
   [TOKEN_IF]            = {NULL,     NULL,   PREC_NONE},
   [TOKEN_NIL]           = {literal,  NULL,   PREC_NONE},
-  [TOKEN_OR]            = {NULL,     NULL,   PREC_NONE},
+  [TOKEN_OR]            = {NULL,     or_,    PREC_OR},
   [TOKEN_PRINT]         = {NULL,     NULL,   PREC_NONE},
   [TOKEN_RETURN]        = {NULL,     NULL,   PREC_NONE},
   [TOKEN_SUPER]         = {NULL,     NULL,   PREC_NONE},
@@ -503,6 +541,30 @@ static void defineVariable(uint8_t global)
     emitBytes(OP_DEFINE_GLOBAL, global); 
 }
 
+// &&
+static void and_(bool canAssign)
+{
+    int endJump = emitJump(OP_JUMP_IF_FALSE);
+
+    emitByte(OP_POP);   // 弹出栈中的true，看看另一个表达式
+    parsePrecedence(PREC_AND);
+
+    patchJump(endJump); // 栈中的false直接保留下来，返回
+}
+
+// || 
+static void or_(bool canAssign)
+{
+    int elseJump = emitJump(OP_JUMP_IF_FALSE);
+    int endJump = emitJump(OP_JUMP);    // 栈中的true直接保留，返回
+
+    patchJump(elseJump);
+    emitByte(OP_POP);   // false弹栈看下一个表达式
+
+    parsePrecedence(PREC_OR);
+    patchJump(endJump);
+}
+
 // 在表中查询
 static ParseRule* getRule(TokenType type)
 {
@@ -553,12 +615,105 @@ static void expressionStatement()
     emitByte(OP_POP);
 }
 
+// for 
+static void forStatement()
+{
+    beginScope();
+
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
+    if (match(TOKEN_SEMICOLON))
+    {
+
+    }
+    else if (match(TOKEN_VAR))
+    {
+        varDeclaration();
+    }
+    else
+    {
+        expressionStatement();
+    }
+
+    int loopStart = currentChunk()->count;
+    int exitJump = -1;
+    if (!match(TOKEN_SEMICOLON))
+    {
+        expression();
+        consume(TOKEN_SEMICOLON, "Expect ';' after loop condition.");
+
+        exitJump = emitJump(OP_JUMP_IF_FALSE);  // false就跳出去
+        emitByte(OP_POP);
+    }
+
+    if (!match(TOKEN_RIGHT_PAREN))
+    {
+        int bodyJump = emitJump(OP_JUMP);   // 先不执行增量，跳转到body代码
+        int incrementStart = currentChunk()->count; // 这里是第一跳，跳到增量
+        expression();
+        emitByte(OP_POP);
+        consume(TOKEN_RIGHT_PAREN, "Expect ')' after for clauses.");
+
+        emitLoop(loopStart);    // 这里在是第二跳，跳到开始
+        loopStart = incrementStart;
+        patchJump(bodyJump);
+    }
+
+    statement();
+    emitLoop(loopStart);
+
+    if (exitJump != -1)
+    {
+        patchJump(exitJump);
+        emitByte(OP_POP);
+    }
+
+    endScope();
+}
+
+// 编译if语句
+static void ifStatement()
+{
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition."); 
+
+    int thenJump = emitJump(OP_JUMP_IF_FALSE);
+
+    emitByte(OP_POP);   // if
+    statement();    
+    int elseJump = emitJump(OP_JUMP);
+
+    patchJump(thenJump);
+
+    emitByte(OP_POP);   // else 
+    if (match(TOKEN_ELSE)) statement(); 
+
+    patchJump(elseJump);
+}
+
 // print语句
 static void printStatement()
 {
     expression();
     consume(TOKEN_SEMICOLON, "Expect ';' after value.");
     emitByte(OP_PRINT);
+}
+
+// while
+static void whileStatement()
+{
+    int loopStart = currentChunk()->count;
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+    int exitJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP);
+    statement();
+    emitLoop(loopStart);
+
+    patchJump(exitJump);
+    emitByte(OP_POP);
 }
 
 // 发生恐慌后接着寻找这个语句的错误
@@ -617,6 +772,18 @@ static void statement()
         beginScope();
         block();
         endScope();
+    }
+    else if (match(TOKEN_IF))
+    {
+        ifStatement();
+    }
+    else if (match(TOKEN_WHILE))
+    {
+        whileStatement();
+    }
+    else if (match(TOKEN_FOR))
+    {
+        forStatement();
     }
     else
     {
