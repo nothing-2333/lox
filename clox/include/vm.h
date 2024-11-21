@@ -1,17 +1,27 @@
 #ifndef clox_vm_h
 #define clox_vm_h
 
-#include "chunk.h"
+#include "object.h"
 #include "value.h"
 #include "table.h"
 
-#define STACK_MAX 256
+#define FRAMES_MAX          64
+#define STACK_MAX           (FRAMES_MAX * UINT8_COUNT)
+
+// 栈帧
+typedef struct 
+{
+  ObjFunction* function;
+  uint8_t* ip;  // 函数返回的ip
+  Value* slots; // 函数可以使用的第一个槽，函数自己的栈
+} CallFrame;
 
 // 虚拟机，喜欢吗
 typedef struct 
 {
-    Chunk* chunk;
-    uint8_t* ip; // ip 总是指向下一条指令，而不是当前正在处理的指令
+    CallFrame frames[FRAMES_MAX];   // 存储一个一个栈帧
+    int frameCount;
+
     Value stack[STACK_MAX]; // 栈式虚拟机，最重要的当然是栈
     Value* stackTop;    // 下一个空闲空间
     Table globals;    // 全局作用域表

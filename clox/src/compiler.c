@@ -51,20 +51,34 @@ typedef struct
     Token name;
     int depth;
 } Local;
-typedef struct 
+
+// 顶层代码，还是函数主体
+typedef enum
 {
+    TYPE_FUNCTION,
+    TYPE_SCRIPT,
+} FunctionType;
+
+// 编译器
+typedef struct Compiler
+{
+    struct Compiler* enclosing; // 指向上一层环境
+
+    ObjFunction* function;
+    FunctionType type;      // 将整个程序包裹在一个隐式的函数中，编译器是在编译层层嵌套的函数
+
     Local locals[UINT8_COUNT];
-    int localCount;
-    int scopeDepth;
+    int localCount; // 局部作用域的数量
+    int scopeDepth; // 当前作用域的深度
 } Compiler;
 
 Parser parser; // 解析器也是全局的
 Compiler* current = NULL;    // 编译器的局部作用域
-Chunk* compilingChunk;   // 存储解析出的字节码
 
+// 当前编译到的字节码
 static Chunk* currentChunk()
 {
-    return compilingChunk;
+    return &current->function->chunk;
 }
 
 // 报告错误的实现
@@ -179,6 +193,7 @@ static int emitJump(uint8_t instruction)
 // 向字节码中添加OP_RETURN
 static void emitReturn()
 {
+    emitByte(OP_NIL);
     emitByte(OP_RETURN);
 }
 
@@ -216,23 +231,43 @@ static void patchJump(int offset)
 }
 
 // 初始化
-static void initCompiler(Compiler* compiler)
+static void initCompiler(Compiler* compiler, FunctionType type)
 {
+    compiler->enclosing = current;  // 指向上一个函数
+    compiler->function = NULL;
+    compiler->type = type;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
+    compiler->function = newFunction(); // 蜜汁操作加一
     current = compiler;
+
+    if (type!= TYPE_SCRIPT)
+    {
+        current->function->name = copyString(parser.previous.start, parser.previous.length);
+    }
+
+    Local* local = &current->locals[current->localCount++]; // 0供虚拟机自己内部使用
+    local->depth = 0;
+    local->name.start = "";
+    local->name.length = 0;
 }
 
 // 编译的收尾
-static void endCompiler()
+static ObjFunction* endCompiler()
 {
     emitReturn();
+    ObjFunction* function = current->function;
+
     #ifdef DEBUG_PRINT_CODE
     if (!parser.hadError)
     {
-        disassembleChunk(currentChunk(), "code");
+        disassembleChunk(currentChunk(), function->name != NULL ? function->name->chars : "<script>");
     }
     #endif
+
+    current = current->enclosing;   // 还原回去
+
+    return function;
 }
 
 // 作用域加一
@@ -262,6 +297,7 @@ static uint8_t identifierConstant(Token* name);
 static int resolveLocal(Compiler* compiler, Token* name);
 static void and_(bool canAssign);
 static void or_(bool canAssign);
+static uint8_t argumentList();
 
 // 二元表达式
 static void binary(bool canAssign)    // 中缀表达式
@@ -285,6 +321,13 @@ static void binary(bool canAssign)    // 中缀表达式
         case TOKEN_SLASH:           emitByte(OP_DIVIDE); break;
         default: return; // 不是二元表达式
     }
+}
+
+// 函数调用
+static void call(bool canAssign)
+{
+    uint8_t argCount = argumentList();
+    emitBytes(OP_CALL, argCount);
 }
 
 // 解析false、nil或 true
@@ -370,7 +413,7 @@ static void unary(bool canAssign) // 前缀表达式
 }
 
 ParseRule rules[] = {
-  [TOKEN_LEFT_PAREN]    = {grouping, NULL,   PREC_NONE},
+  [TOKEN_LEFT_PAREN]    = {grouping, call,   PREC_CALL},
   [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,   PREC_NONE},
   [TOKEN_LEFT_BRACE]    = {NULL,     NULL,   PREC_NONE}, 
   [TOKEN_RIGHT_BRACE]   = {NULL,     NULL,   PREC_NONE},
@@ -526,6 +569,7 @@ static uint8_t parseVariable(const char* errorMessage)
 // 变量的初始化式编译完成，再将其标记为已初始化
 static void markInitialized()
 {
+    if (current->scopeDepth == 0) return;
     current->locals[current->localCount - 1].depth = current->scopeDepth;
 }
 
@@ -539,6 +583,26 @@ static void defineVariable(uint8_t global)
     }
 
     emitBytes(OP_DEFINE_GLOBAL, global); 
+}
+
+// 函数参数个数
+static uint8_t argumentList()
+{
+    uint8_t argCount = 0;
+    if (!check(TOKEN_RIGHT_PAREN))
+    {
+        do
+        {
+            expression();
+            if (argCount == 255)
+            {
+                error("Can't have more than 255 arguments.");
+            }
+            argCount++;
+        } while (match(TOKEN_COMMA));
+    }
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+    return argCount;
 }
 
 // &&
@@ -588,6 +652,45 @@ static void block()
     
     consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
 }
+
+// 处理函数 
+static void function(FunctionType type)
+{
+    Compiler compiler;
+    initCompiler(&compiler, type);
+    beginScope();
+
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+    if (!check(TOKEN_RIGHT_PAREN))
+    {
+        do 
+        {
+            current->function->arity++;
+            if (current->function->arity > 255)
+            {
+                errorAtCurrent("Can't have more than 255 parameters.");
+            }
+            uint8_t constant = parseVariable("Expect parameter name.");
+            defineVariable(constant);
+        } while (match(TOKEN_COMMA));
+    }
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+    consume(TOKEN_LEFT_BRACE, "Expect '{' before function body.");
+    block();
+
+    ObjFunction* function = endCompiler();
+    emitBytes(OP_CONSTANT, makeConstant(OBJ_VAL(function)));
+}
+
+// 遇见函数关键字
+static void funDeclaration()
+{
+    uint8_t global = parseVariable("Expect function name.");
+    markInitialized();  // 函数内部可以引用自己
+    function(TYPE_FUNCTION);
+    defineVariable(global);
+}
+
 
 // var语句
 static void varDeclaration()
@@ -699,6 +802,26 @@ static void printStatement()
     emitByte(OP_PRINT);
 }
 
+// 遇见return关键字
+static void returnStatement()
+{
+    if (current->type == TYPE_SCRIPT)
+    {
+        error("Can't return from top-level code.");
+    }
+
+    if (match(TOKEN_SEMICOLON))
+    {
+        emitReturn();
+    }
+    else
+    {
+        expression();
+        consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
+        emitByte(OP_RETURN);
+    }
+}
+
 // while
 static void whileStatement()
 {
@@ -752,6 +875,10 @@ static void declaration()
     {
         varDeclaration();
     }
+    else if (match(TOKEN_FUN))
+    {
+        funDeclaration();
+    }
     else
     {
         statement();
@@ -785,6 +912,10 @@ static void statement()
     {
         forStatement();
     }
+    else if (match(TOKEN_RETURN))
+    {
+        returnStatement();
+    }
     else
     {
         expressionStatement();
@@ -805,12 +936,11 @@ statement      → exprStmt
                | whileStmt
                | block ;
  */
-bool compile(const char* source, Chunk* chunk)
+ObjFunction* compile(const char* source)
 {
     initScanner(source);
     Compiler compiler;
-    initCompiler(&compiler);
-    compilingChunk = chunk; // 都是指针，真正的资源只有一个，在vm.c中
+    initCompiler(&compiler, TYPE_SCRIPT);
 
     parser.hadError = false;
     parser.panicMode = false;
@@ -821,6 +951,6 @@ bool compile(const char* source, Chunk* chunk)
         declaration();
     }
     
-    endCompiler();
-    return !parser.hadError;
+    ObjFunction* function =  endCompiler();
+    return parser.hadError ? NULL : function;
 }
