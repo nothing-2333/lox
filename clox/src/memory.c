@@ -40,6 +40,18 @@ static void freeObject(Obj* object)
             FREE(ObjNative, object);
             break;
         }
+        case OBJ_CLOSURE:
+        {
+            ObjClosure* closure = (ObjClosure*)object;
+            FREE_APPLY(ObjUpvalue*, closure->upvalues, closure->upvalueCount);  // 只释放指针，值留着取悦即将到来的GC神灵
+            FREE(ObjClosure, object);   // 不释放闭包中的函数内存，因为闭包不拥有函数
+            break;
+        }
+        case OBJ_UPVALUE:
+        {
+            FREE(ObjUpvalue, object);
+            break;
+        }
     }
 }
 

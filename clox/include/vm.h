@@ -11,9 +11,9 @@
 // 栈帧
 typedef struct 
 {
-  ObjFunction* function;
-  uint8_t* ip;  // 函数返回的ip
-  Value* slots; // 函数可以使用的第一个槽，函数自己的栈
+  ObjClosure* closure;      // 函数的闭包
+  uint8_t* ip;              // 函数执行的位置
+  Value* slots;             // 函数可以使用栈开始位置
 } CallFrame;
 
 // 虚拟机，喜欢吗
@@ -22,11 +22,12 @@ typedef struct
     CallFrame frames[FRAMES_MAX];   // 存储一个一个栈帧
     int frameCount;
 
-    Value stack[STACK_MAX]; // 栈式虚拟机，最重要的当然是栈
-    Value* stackTop;    // 下一个空闲空间
-    Table globals;    // 全局作用域表
-    Table strings;  // hash表中驻留的字符串-集合
-    Obj* objects; // 指向申请内存的对象
+    Value stack[STACK_MAX];         // 栈式虚拟机，最重要的当然是栈
+    Value* stackTop;                // 下一个空闲空间
+    Table globals;                  // 全局作用域表
+    Table strings;                  // hash表中驻留的字符串-集合
+    ObjUpvalue* openUpvalues;       // 指向上值的堆地址的指针列表头
+    Obj* objects;                   // 指向申请内存的对象
 } VM;
 
 // 虚拟机执行过程结果

@@ -50,7 +50,15 @@ typedef struct
 {
     Token name;
     int depth;
+    bool isCaptrued;        // 是否是某个函数的上值
 } Local;
+
+// 上值
+typedef struct
+{
+    uint8_t index;      // 上一个函数栈的索引
+    bool isLocal;       // 
+} Upvalue;
 
 // 顶层代码，还是函数主体
 typedef enum
@@ -62,14 +70,15 @@ typedef enum
 // 编译器
 typedef struct Compiler
 {
-    struct Compiler* enclosing; // 指向上一层环境
+    struct Compiler* enclosing;     // 指向上一层环境
 
     ObjFunction* function;
-    FunctionType type;      // 将整个程序包裹在一个隐式的函数中，编译器是在编译层层嵌套的函数
+    FunctionType type;              // 将整个程序包裹在一个隐式的函数中，编译器是在编译层层嵌套的函数
 
     Local locals[UINT8_COUNT];
-    int localCount; // 局部作用域的数量
-    int scopeDepth; // 当前作用域的深度
+    int localCount;                 // 局部变量的数量
+    Upvalue upvalues[UINT8_COUNT];  // 上值
+    int scopeDepth;                 // 当前作用域的深度
 } Compiler;
 
 Parser parser; // 解析器也是全局的
@@ -248,6 +257,7 @@ static void initCompiler(Compiler* compiler, FunctionType type)
 
     Local* local = &current->locals[current->localCount++]; // 0供虚拟机自己内部使用
     local->depth = 0;
+    local->isCaptrued = false;
     local->name.start = "";
     local->name.length = 0;
 }
@@ -283,7 +293,14 @@ static void endScope()
 
     while (current->localCount > 0 && current->locals[current->localCount - 1].depth > current->scopeDepth)
     {
-        emitByte(OP_POP);   // 作用域消失时，局部变量出栈
+        if (current->locals[current->localCount - 1].isCaptrued)
+        {
+            emitByte(OP_CLOSE_UPVALUE);
+        }
+        else
+        {
+            emitByte(OP_POP);   // 作用域消失时，局部变量出栈
+        }
         current->localCount--;
     }
 }
@@ -298,6 +315,7 @@ static int resolveLocal(Compiler* compiler, Token* name);
 static void and_(bool canAssign);
 static void or_(bool canAssign);
 static uint8_t argumentList();
+static int resolveUpvalue(Compiler* compiler, Token* name);
 
 // 二元表达式
 static void binary(bool canAssign)    // 中缀表达式
@@ -369,13 +387,18 @@ static void namedVariable(Token name, bool canAssign)
     int arg = resolveLocal(current, &name);
     if (arg != -1)
     {
-        getOp = OP_GET_LOCAL;
+        getOp = OP_GET_LOCAL;   // 函数作用域
         setOp = OP_SET_LOCAL;
+    }
+    else if ((arg = resolveUpvalue(current, &name)) != -1)
+    {
+        getOp = OP_GET_UPVALUE; // 嵌套函数的上值
+        setOp = OP_SET_UPVALUE;
     }
     else
     {
         arg = identifierConstant(&name);
-        getOp = OP_GET_GLOBAL;
+        getOp = OP_GET_GLOBAL;  // 全局作用域
         setOp = OP_SET_GLOBAL;
     }
 
@@ -519,6 +542,52 @@ static int resolveLocal(Compiler* compiler, Token* name)
     return -1;
 }
 
+// 为当前函数添加一个上值
+static int addUpvalue(Compiler* compiler, uint8_t index, bool isLocal)
+{
+    int upvalueCount = compiler->function->upvalueCount;
+
+    for (int i = 0; i < upvalueCount; ++i)
+    {
+        Upvalue* upvalue = &compiler->upvalues[i];
+        if (upvalue->index == index && upvalue->isLocal == isLocal)
+        {
+            return i;
+        }
+    }
+
+    if (upvalueCount == UINT8_COUNT)
+    {
+        error("Too many closure variables in function.");
+        return 0;
+    }
+
+    compiler->upvalues[upvalueCount].isLocal = isLocal;
+    compiler->upvalues[upvalueCount].index = index;
+    return compiler->function->upvalueCount++;  // 返回自己的上值序号
+}
+
+// 寻找上值变量
+static int resolveUpvalue(Compiler* compiler, Token* name)
+{
+    if (compiler->enclosing == NULL) return -1;
+
+    int local = resolveLocal(compiler->enclosing, name);
+    if (local != -1)
+    {
+        compiler->enclosing->locals[local].isCaptrued = true;
+        return addUpvalue(compiler, (uint8_t)local, true);      // 上值true
+    }
+
+    int upvalue = resolveUpvalue(compiler->enclosing, name);    // 递归寻找
+    if (upvalue != -1)
+    {
+        return addUpvalue(compiler, (uint8_t)upvalue, false);   // 上上上*值false
+    }
+
+    return -1;
+}
+
 // 记住局部变量的位置
 static void addLocal(Token name)
 {
@@ -531,6 +600,7 @@ static void addLocal(Token name)
     Local* local = &current->locals[current->localCount++];
     local->name = name;
     local->depth = -1;
+    local->isCaptrued = false;
 }
 
 // 局部变量处理
@@ -657,7 +727,7 @@ static void block()
 static void function(FunctionType type)
 {
     Compiler compiler;
-    initCompiler(&compiler, type);
+    initCompiler(&compiler, type);  // 每个函数都新开一个局部变量数组
     beginScope();
 
     consume(TOKEN_LEFT_PAREN, "Expect '(' after function name.");
@@ -679,7 +749,13 @@ static void function(FunctionType type)
     block();
 
     ObjFunction* function = endCompiler();
-    emitBytes(OP_CONSTANT, makeConstant(OBJ_VAL(function)));
+    emitBytes(OP_CLOSURE, makeConstant(OBJ_VAL(function)));
+
+    for (int i = 0; i < function->upvalueCount; ++i)    // 将内层函数所需要的上值保留下来
+    {
+        emitByte(compiler.upvalues[i].isLocal ? 1 : 0);
+        emitByte(compiler.upvalues[i].index);
+    }
 }
 
 // 遇见函数关键字
