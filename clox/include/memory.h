@@ -22,6 +22,14 @@
 // 分配内存实现函数，所有内存操作都经过此函数
 void* reallocate(void* pointer, size_t oldSize, size_t newSize);
 
+void markObject(Obj* Object);
+
+// 标记一个变量
+void markValue(Value value);
+
+// GC
+void collectGarbage();
+
 // 释放堆上为对象申请的内存
 void freeObjects();
 

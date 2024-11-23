@@ -28,6 +28,13 @@ typedef struct
     Table strings;                  // hash表中驻留的字符串-集合
     ObjUpvalue* openUpvalues;       // 指向上值的堆地址的指针列表头
     Obj* objects;                   // 指向申请内存的对象
+
+    int grayCount;                  // 三色抽象灰色工厂
+    int grayCapacity;
+    Obj** grayStack;
+
+    size_t bytesAllocated;          // GC触发机制
+    size_t nextGC;
 } VM;
 
 // 虚拟机执行过程结果

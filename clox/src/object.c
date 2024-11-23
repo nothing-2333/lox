@@ -16,9 +16,14 @@ static Obj* allocateObject(size_t size, ObjType type)
 {
     Obj* object = (Obj*)reallocate(NULL, 0, size);
     object->type = type;
+    object->isMarked = false;
 
     object->next = vm.objects;  // 插入头部
     vm.objects = object;
+
+    #ifdef DEBUG_LOG_GC // 对象分配时打印
+    printf("%p allocate %zu for %d\n", (void*)object, size, type);
+    #endif
 
     return object;
 }
@@ -46,7 +51,11 @@ static ObjString* allocateString(char* chars, int length, uint32_t hash)
     string->length = length;
     string->chars = chars;
     string->hash = hash;
+
+    push(OBJ_VAL(string));
     tableSet(&vm.strings, string, NIL_VAL); // 把hash表当集合用，要确保设置相同的字符串指向的地址一样
+    pop();
+
     return string;
 }
 

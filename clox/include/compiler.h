@@ -4,6 +4,10 @@
 #include "vm.h"
 #include "object.h"
 
+// 编译
 ObjFunction* compile(const char* source);
+
+// 标记编译用到的对象
+void markCompilerRoots();
 
 #endif

@@ -34,4 +34,9 @@ void tableAddAll(Table* from, Table* to);
 // 严格查找，key的每一个字节都要一样
 ObjString* tableFindString(Table* table, const char* chars, int length, uint32_t hash);
 
+// 标记表中对象
+void markTable(Table* table); 
+// 清除即将被删除的字符串
+void tableRemoveWhite(Table* table);
+
 #endif

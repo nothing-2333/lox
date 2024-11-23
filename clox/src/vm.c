@@ -69,6 +69,14 @@ void initVM()
     freeTable(&vm.globals);
     resetStack();
     vm.objects = NULL;
+
+    vm.grayCount = 0;
+    vm.grayCapacity = 0;
+    vm.grayStack = NULL;
+
+    vm.bytesAllocated = 0;
+    vm.nextGC = 1024 * 1024;
+
     initTable(&vm.strings);
 
     defineNative("clock", clockNative);
@@ -201,8 +209,8 @@ static bool isFalsey(Value value)
 // 字符串连接
 static void concatenate()
 {
-    ObjString* b = AS_STRING(pop());
-    ObjString* a = AS_STRING(pop());
+    ObjString* b = AS_STRING(peek(0));
+    ObjString* a = AS_STRING(peek(1));
 
     int length = a->length + b->length;
     char* chars = ALLOCATE(char, length + 1);
@@ -211,6 +219,8 @@ static void concatenate()
     chars[length] = '\0';
 
     ObjString* result = takeString(chars, length);
+    pop();
+    pop();
     push(OBJ_VAL(result));
 }
 

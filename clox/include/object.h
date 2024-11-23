@@ -35,6 +35,7 @@ typedef enum
 struct Obj
 {
     ObjType type;
+    bool isMarked;      // 标记
     struct Obj* next;   // 用于GC
 };
 
@@ -43,7 +44,7 @@ typedef struct ObjUpvalue
 {
     Obj obj;
     Value* location;    // 栈上变量地址
-    Value closed;
+    Value closed;       // 存储值
     struct ObjUpvalue* next;
 } ObjUpvalue;
 
