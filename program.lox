@@ -1,16 +1,12 @@
-var globalSet;
-var globalGet;
+fun makeClosure() {
+  var a = "data";
 
-fun main() {
-  var a = "initial";
-
-  fun set() { a = "updated"; }
-  fun get() { print a; }
-
-  globalSet = set;
-  globalGet = get;
+  fun f() { print a; }
+  return f;
 }
 
-main();
-globalSet();
-globalGet();
+{
+  var closure = makeClosure();
+  // GC here.
+  closure();
+}

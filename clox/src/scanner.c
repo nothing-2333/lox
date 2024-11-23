@@ -127,7 +127,7 @@ static char peek()
 // current指针下一个字符
 static char peekNext()
 {
-    if (!isAtEnd()) return '\0';    // 不要越界
+    if (isAtEnd()) return '\0';    // 不要越界
     return scanner.current[1];
 }
 
