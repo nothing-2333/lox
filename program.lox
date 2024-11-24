@@ -1,12 +1,6 @@
-fun makeClosure() {
-  var a = "data";
+class Pair {}
 
-  fun f() { print a; }
-  return f;
-}
-
-{
-  var closure = makeClosure();
-  // GC here.
-  closure();
-}
+var pair = Pair();
+pair.first = 1;
+pair.second = 2;
+print pair.first + pair.second; // 3.

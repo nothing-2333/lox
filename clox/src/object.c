@@ -44,6 +44,21 @@ ObjClosure* newClosure(ObjFunction* function)
     return closure;
 }
 
+ObjClass* newClass(ObjString* name)
+{
+    ObjClass* klass = ALLOCATE_OBJ(ObjClass, OBJ_CLASS);
+    klass->name = name;
+    return klass;
+}
+
+ObjInstance* newInstance(ObjClass* Klass)
+{
+    ObjInstance* instance = ALLOCATE_OBJ(ObjInstance, OBJ_INSTANCE);
+    instance->klass = Klass;
+    initTable(&instance->fields);
+    return instance;
+}
+
 // 申请字符串类型的内存
 static ObjString* allocateString(char* chars, int length, uint32_t hash)
 {
@@ -140,10 +155,12 @@ void printObject(Value value)
 {
     switch (OBJ_TYPE(value))
     {
+        case OBJ_INSTANCE:      printf("%s instance", AS_INSTANCE(value)->klass->name->chars); break;
         case OBJ_CLOSURE:       printFunction(AS_CLOSURE(value)->function); break;
         case OBJ_FUNCTION:      printFunction(AS_FUNCTION(value)); break;
         case OBJ_STRING:        printf("%s", AS_CSTRING(value)); break;
         case OBJ_NATIVE:        printf("<native fn>"); break;
         case OBJ_UPVALUE:       printf("upvalue"); break;
+        case OBJ_CLASS:         printf("%s", AS_CLASS(value)->name->chars); break;
     }
 }
