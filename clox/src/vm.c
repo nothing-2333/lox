@@ -79,12 +79,16 @@ void initVM()
 
     initTable(&vm.strings);
 
+    vm.initString = NULL;   // GC无孔不入
+    vm.initString = copyString("init", 4);
+
     defineNative("clock", clockNative);
 }
  
 void freeVM()
 {
     freeTable(&vm.strings);
+    vm.initString = NULL;
     freeObjects(); 
 }
 
@@ -135,10 +139,25 @@ static bool callValue(Value callee, int argCount)
     {
         switch (OBJ_TYPE(callee))
         {
+            case OBJ_BOUND_METHOD:
+            {
+                ObjBoundMethod* bound = AS_BOUND_METHOD(callee);
+                vm.stackTop[-argCount - 1] = bound->receiver;   // 把0号槽赋值成实例
+                return call(bound->method, argCount);
+            }
             case OBJ_CLASS:
             {
                 ObjClass* klass = AS_CLASS(callee);
                 vm.stackTop[-argCount - 1] = OBJ_VAL(newInstance(klass));   // 将栈中类的位置替换成实例
+                Value initializer;
+                if (tableGet(&klass->methods, vm.initString, &initializer))
+                {
+                    return call(AS_CLOSURE(initializer), argCount);
+                }
+                else if (argCount != 0)
+                {
+                    runtimeError("Expected 0 arguments but got %d.", argCount);
+                }
                 return true;
             }
             case OBJ_NATIVE:
@@ -158,6 +177,55 @@ static bool callValue(Value callee, int argCount)
 
     runtimeError("Can only call functions and classes.");
     return false;
+}
+
+static bool invokeFromClass(ObjClass* klass, ObjString* name, int argCount)
+{
+    Value method;
+    if (!tableGet(&klass->methods, name, &method))
+    {
+        runtimeError("Undefined property '%s'.", name->chars);
+        return false;
+    }
+    return call(AS_CLOSURE(method), argCount);
+}
+
+// 方法调用
+static bool invoke(ObjString* name, int argCount)
+{
+    Value receiver = peek(argCount);
+    if (!IS_INSTANCE(receiver))
+    {
+        runtimeError("Only instances have methods.");
+        return false;
+    }
+
+    ObjInstance* instance = AS_INSTANCE(receiver);
+
+    Value value;
+    if (tableGet(&instance->fields, name, &value))  // 先查找实例字段
+    {
+        vm.stackTop[-argCount - 1] = value;
+        return callValue(value, argCount);
+    }
+
+    return invokeFromClass(instance->klass, name, argCount);    // 在查找类方法
+}
+
+// 寻找方法
+static bool bindMethod(ObjClass* klass, ObjString* name)
+{
+    Value method;
+    if (!tableGet(&klass->methods, name, &method))
+    {
+        runtimeError("Undefined property '%s'.", name->chars);
+        return false;
+    }
+
+    ObjBoundMethod* bound = newBoundMethod(peek(0), AS_CLOSURE(method));
+    pop();
+    push(OBJ_VAL(bound));   // 找到就放入栈中，并将实例出栈
+    return true;
 }
 
 // 创建上值，将堆地址分装成ObjUpvalue
@@ -204,6 +272,15 @@ static void closeUpvalues(Value* last)
 
         vm.openUpvalues = upvalue->next;
     }
+}
+
+// 定义方法
+static void defineMethod(ObjString* name)
+{
+    Value method = peek(0);
+    ObjClass* klass = AS_CLASS(peek(1));
+    tableSet(&klass->methods, name, method);
+    pop();
 }
 
 // 判断假值
@@ -411,6 +488,9 @@ static InterpretResult run()
             frame = &vm.frames[vm.frameCount - 1];  // 转到最新的栈帧
             break;
         }
+        case OP_METHOD:
+            defineMethod(READ_STRING());
+            break;
         case OP_CLOSURE:
         {
             ObjFunction* function = AS_FUNCTION(READ_CONSTANT());
@@ -457,8 +537,11 @@ static InterpretResult run()
                 break;
             }
 
-            runtimeError("Undefined property '%s'.", name->chars);
-            return INTERPRET_RUNTIME_ERROR;
+            if (!bindMethod(instance->klass, name))
+            {
+                return INTERPRET_RUNTIME_ERROR;
+            }
+            break;
         }
         case OP_SET_PROPERTY:
         {
@@ -473,6 +556,17 @@ static InterpretResult run()
             Value value = pop();
             pop();
             push(value);
+            break;
+        }
+        case OP_INVOKE: // 优化方法调用
+        {
+            ObjString* method = READ_STRING();
+            int argCount = READ_BYTE();
+            if (!invoke(method, argCount))
+            {
+                return INTERPRET_RUNTIME_ERROR;
+            }
+            frame = &vm.frames[vm.frameCount - 1];   // 类似call
             break;
         }
         case OP_CLASS:

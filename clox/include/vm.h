@@ -26,6 +26,7 @@ typedef struct
     Value* stackTop;                // 下一个空闲空间
     Table globals;                  // 全局作用域表
     Table strings;                  // hash表中驻留的字符串-集合
+    ObjString* initString;          // 初始化类的名称
     ObjUpvalue* openUpvalues;       // 指向上值的堆地址的指针列表头
     Obj* objects;                   // 指向申请内存的对象
 

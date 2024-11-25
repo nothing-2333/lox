@@ -76,6 +76,9 @@ static void freeObject(Obj* object)
 
     switch (object->type)
     {
+        case OBJ_BOUND_METHOD:
+            FREE(ObjBoundMethod, object);
+            break;
         case OBJ_INSTANCE:
         {
             ObjInstance* instance = (ObjInstance*)object;
@@ -85,6 +88,8 @@ static void freeObject(Obj* object)
         }
         case OBJ_CLASS:
         {
+            ObjClass* klass = (ObjClass*)object;
+            freeTable(&klass->methods);
             FREE(ObjClass, object);
             break;
         }
@@ -148,6 +153,9 @@ static void markRoots()
 
     // 编译期间用到的内存
     markCompilerRoots();
+
+    // 驻留的字符串
+    markObject((Obj*)vm.initString);
 }
 
 // 标记对象数组
@@ -170,6 +178,13 @@ static void blackenObject(Obj* object)
 
     switch (object->type)
     {
+        case OBJ_BOUND_METHOD:
+        {
+            ObjBoundMethod* bound = (ObjBoundMethod*)object;
+            markValue(bound->receiver);
+            markObject((Obj*)bound->method);
+            break;
+        }
         case OBJ_INSTANCE:
         {
             ObjInstance* instance = (ObjInstance*)object;
@@ -181,6 +196,7 @@ static void blackenObject(Obj* object)
         {
             ObjClass* klass = (ObjClass*)object;
             markObject((Obj*)klass->name);
+            markTable(&klass->methods);
             break;
         }
         case OBJ_CLOSURE:

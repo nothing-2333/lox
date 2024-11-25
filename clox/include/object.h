@@ -10,6 +10,7 @@
 #define OBJ_TYPE(value)             (AS_OBJ(value)->type)
 
 // 判断
+#define IS_BOUND_METHOD(value)      isObjType(value, OBJ_BOUND_METHOD)
 #define IS_INSTANCE(value)          isObjType(value, OBJ_INSTANCE)
 #define IS_CLASS(value)             isObjType(value, OBJ_CLASS)
 #define IS_CLOSURE(value)           isObjType(value, OBJ_CLOSURE)
@@ -18,6 +19,7 @@
 #define IS_STRING(value)            isObjType(value, OBJ_STRING)
 
 // 转换
+#define AS_BOUND_METHOD(value)      ((ObjBoundMethod*)AS_OBJ(value))
 #define AS_INSTANCE(value)          ((ObjInstance*)AS_OBJ(value))
 #define AS_CLASS(value)             ((ObjClass*)AS_OBJ(value))
 #define AS_CLOSURE(value)           ((ObjClosure*)AS_OBJ(value))
@@ -29,6 +31,7 @@
 // 对象类型包含的类型
 typedef enum
 {
+    OBJ_BOUND_METHOD,
     OBJ_NATIVE,
     OBJ_INSTANCE,
     OBJ_CLASS,
@@ -85,6 +88,7 @@ typedef struct
 {
     Obj obj;
     ObjString* name;
+    Table methods;          // 虚表
 } ObjClass;
 
 // 实例
@@ -92,9 +96,16 @@ typedef struct
 {
     Obj obj;
     ObjClass* klass;
-    Table fields;
+    Table fields;           // 属性
 } ObjInstance;
 
+// 绑定了实例的方法对象
+typedef struct 
+{
+    Obj obj;
+    Value receiver;
+    ObjClosure* method;
+} ObjBoundMethod;
 
 // 本地函数
 typedef Value (*NativeFn)(int argCount, Value* args);
@@ -103,6 +114,9 @@ typedef struct
     Obj obj;
     NativeFn function;
 } ObjNative;
+
+// 开辟
+ObjBoundMethod* newBoundMethod(Value receiver, ObjClosure* method);
 
 // 开辟一个类的空间
 ObjClass* newClass(ObjString* name);

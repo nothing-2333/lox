@@ -66,6 +66,8 @@ typedef enum
 {
     TYPE_FUNCTION,
     TYPE_SCRIPT,
+    TYPE_METHOD,
+    TYPE_INITIALIZER,
 } FunctionType;
 
 // 编译器
@@ -82,8 +84,16 @@ typedef struct Compiler
     int scopeDepth;                 // 当前作用域的深度
 } Compiler;
 
-Parser parser; // 解析器也是全局的
-Compiler* current = NULL;    // 编译器的局部作用域
+// 编译器正在编译的类
+typedef struct ClassCompiler
+{
+    struct ClassCompiler* enclosing;    // 上一层类
+} ClassCompiler;
+
+
+Parser parser;                          // 解析器也是全局的
+Compiler* current = NULL;               // 编译器的局部作用域
+ClassCompiler* currentClass = NULL;     // 当前处于的类
 
 // 当前编译到的字节码
 static Chunk* currentChunk()
@@ -203,7 +213,15 @@ static int emitJump(uint8_t instruction)
 // 向字节码中添加OP_RETURN
 static void emitReturn()
 {
-    emitByte(OP_NIL);
+    if (current->type == TYPE_INITIALIZER)
+    {
+        emitBytes(OP_GET_LOCAL, 0);    // 如果是类的初始化方法，隐式的返回实例
+    }
+    else
+    {
+        emitByte(OP_NIL);
+    }
+
     emitByte(OP_RETURN);
 }
 
@@ -251,16 +269,25 @@ static void initCompiler(Compiler* compiler, FunctionType type)
     compiler->function = newFunction(); // 蜜汁操作加一
     current = compiler;
 
-    if (type!= TYPE_SCRIPT)
+    if (type != TYPE_SCRIPT)
     {
-        current->function->name = copyString(parser.previous.start, parser.previous.length);
+        // 局部函数名放入常量池
+        current->function->name = copyString(parser.previous.start, parser.previous.length);    
     }
 
     Local* local = &current->locals[current->localCount++]; // 0供虚拟机自己内部使用
     local->depth = 0;
     local->isCaptrued = false;
-    local->name.start = "";
-    local->name.length = 0;
+    if (type != TYPE_FUNCTION)
+    {
+        local->name.start = "this";
+        local->name.length = 4;
+    }
+    else
+    {
+        local->name.start = "";
+        local->name.length = 0;
+    }
 }
 
 // 编译的收尾
@@ -360,6 +387,12 @@ static void dot(bool canAssign)
         expression();
         emitBytes(OP_SET_PROPERTY, name);
     }
+    else if (match(TOKEN_LEFT_PAREN))
+    {
+        uint8_t argCount = argumentList();
+        emitBytes(OP_INVOKE, name);     // 方法调用的优化-建立一个新的指令
+        emitByte(argCount);
+    }
     else
     {
         emitBytes(OP_GET_PROPERTY, name);
@@ -438,6 +471,18 @@ static void variable(bool canAssign)
     namedVariable(parser.previous, canAssign);
 }
 
+// this关键字
+static void this_(bool canAssign)
+{
+    if (currentClass == NULL)
+    {
+        error("Can't use 'this' outside of a class.");
+        return;
+    }
+
+    variable(false);    // this像局部变量一样编译
+}
+
 // 一元表达式
 static void unary(bool canAssign) // 前缀表达式 
 {
@@ -488,7 +533,7 @@ ParseRule rules[] = {
   [TOKEN_PRINT]         = {NULL,     NULL,   PREC_NONE},
   [TOKEN_RETURN]        = {NULL,     NULL,   PREC_NONE},
   [TOKEN_SUPER]         = {NULL,     NULL,   PREC_NONE},
-  [TOKEN_THIS]          = {NULL,     NULL,   PREC_NONE},
+  [TOKEN_THIS]          = {this_,    NULL,   PREC_NONE},
   [TOKEN_TRUE]          = {literal,  NULL,   PREC_NONE},
   [TOKEN_VAR]           = {NULL,     NULL,   PREC_NONE},
   [TOKEN_WHILE]         = {NULL,     NULL,   PREC_NONE},
@@ -776,18 +821,51 @@ static void function(FunctionType type)
     }
 }
 
+// 方法
+static void method()
+{
+    consume(TOKEN_IDENTIFIER, "Expect method name.");
+    uint8_t constant = identifierConstant(&parser.previous);
+
+    FunctionType type = TYPE_METHOD;
+
+    if (parser.previous.length == 4 && memcmp(parser.previous.start, "init", 4) == 0)
+    {
+        type = TYPE_INITIALIZER;
+    }
+
+    function(type);
+
+    emitBytes(OP_METHOD, constant);
+}
+
 // 遇见类关键字
 static void classDeclaration()
 {
     consume(TOKEN_IDENTIFIER, "Expect class name.");
-    uint8_t nameConstant = identifierConstant(&parser.previous);
+    Token className = parser.previous;
+    uint8_t nameConstant = identifierConstant(&parser.previous);    // 获取名称
     declareVariable();
 
-    emitBytes(OP_CLASS, nameConstant);
+    emitBytes(OP_CLASS, nameConstant);  // 定义类
     defineVariable(nameConstant);
 
+    ClassCompiler classCompiler;    // 加入链表
+    classCompiler.enclosing = currentClass;
+    currentClass = &classCompiler;
+
+    namedVariable(className, false);    // 存入栈
     consume(TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+
+    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF))
+    {
+        method();
+    }
+
     consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+    emitByte(OP_POP);                   // 弹出栈
+
+    currentClass = currentClass->enclosing;     // 恢复
 }
 
 // 遇见函数关键字
@@ -924,10 +1002,16 @@ static void returnStatement()
     }
     else
     {
+        if (current->type == TYPE_INITIALIZER)
+        {
+            error("Can't return a value from an initializer.");
+        }
+
         expression();
         consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
         emitByte(OP_RETURN);
     }
+
 }
 
 // while

@@ -25,6 +25,7 @@ typedef enum
     OP_GREATER,
     OP_LESS,
     OP_ADD,
+    OP_METHOD,
     OP_SUBTRACT,
     OP_MULTIPLY,
     OP_DIVIDE,
@@ -39,6 +40,7 @@ typedef enum
     OP_CLOSE_UPVALUE,
     OP_RETURN,
     OP_CLASS,
+    OP_INVOKE,
 } OpCode;
 
 // 代码
