@@ -6,3 +6,6 @@
 
 ## 附上作者原书的链接，伟大的作品！
 https://zaslee.github.io/craftinginterpreters/scanning.html#design-note
+
+伟大的性格让人佩服，绝妙的作品让人感动，如果我有生之年能写出这样一本书，我一定刻在墓碑上
+![alt text](image.png)
